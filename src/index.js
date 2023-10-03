@@ -1,105 +1,154 @@
 
-import PixabayApiService from './js/handlerApi';
-import * as notify from './js/notification';
-import { createMurkup } from './js/createMarkup';
+import axios from 'axios';
+import Notiflix from 'notiflix';
 import SimpleLightbox from 'simplelightbox';
 import 'simplelightbox/dist/simple-lightbox.min.css';
 
-const searchForm = document.querySelector('.search-form');
-const contentContainer = document.querySelector('.gallery');
-// const loadMoreBtn = document.querySelector('.load-more');
-const target = document.querySelector('.js-guard');
+const searchForm = document.getElementById('search-form');
+const gallery = document.querySelector('.gallery');
+const KEY = '39664041-37e45301d98578e53a9ee7384';
 
-searchForm.addEventListener('submit', searchHandler);
-// loadMoreBtn.addEventListener('click', loadMoreClick);
+let query = '';
+let page = 1;
+let simpleLightBox = new SimpleLightbox('.gallery a');
+let allPagesLoaded = false;
+const perPage = 40;
 
-const cardApiService = new PixabayApiService();
+searchForm.addEventListener('submit', onSearchForm);
 
-const options = {
-  root: null,
-  rootMargin: '400px',
-};
-const observer = new IntersectionObserver(scrollObserver, options);
-
-const galleryItems = new SimpleLightbox('.gallery a');
-
-
-
-async function searchHandler(evt) {
-  evt.preventDefault();
-
-  const queryData = evt.currentTarget.query.value;
-  cardApiService.query = queryData.trim();
-
-  clearContentContainer();
-
-  if (cardApiService.query === '') {
-    notify.warningNotificationHandler();
-    clearContentContainer();
+function renderGallery(images) {
+  if (!gallery) {
     return;
   }
 
-  cardApiService.resetPage();
+  const markup = images
+    .map(image => {
+      const { id, largeImageURL, webformatURL, tags, likes, views, comments, downloads, } = image;
+      return `
+        <a class="gallery__link" href="${largeImageURL}">
+          <div class="gallery-item" id="${id}">
+            <img class="gallery-item__img" src="${webformatURL}" alt="${tags}" loading="lazy" />
+            <div class="info">
+              <p class="info-item"><b>Likes</b>${likes}</p>
+              <p class="info-item"><b>Views</b>${views}</p>
+              <p class="info-item"><b>Comments</b>${comments}</p>
+              <p class="info-item"><b>Downloads</b>${downloads}</p>
+            </div>
+          </div>
+        </a>
+      `;
+    })
+    .join('');
 
-  try {
-    const cards = await cardApiService.fetchItems();
-    const totalCards = cards.data.totalHits;
+  gallery.insertAdjacentHTML('beforeend', markup);
+}
 
-    if (cards.data.totalHits === 0) {
-      notify.warningNotificationHandler();
-      return;
-    }
+function onSearchForm(e) {
+  e.preventDefault();
+  page = 1;
+  query = e.currentTarget.elements.searchQuery.value.trim();
+  allPagesLoaded = false;
+  gallery.innerHTML = '';
 
-    appendCardMarkup(cards);
-    notify.successNotificationHandler();
+  if (query === '') {
+    Notiflix.Notify.failure(
+      'The search string cannot be empty. Please specify your search query.',
+    );
+    return;
+  }
 
-    if (totalCards <= cardApiService.perPage) {
-      return;
-    }
-    observer.observe(target);
-  } catch (error) {
-    notify.warningNotificationHandler();
+  fetchImages(query, page, perPage)
+    .then(data => {
+      if (data.totalHits === 0) {
+        Notiflix.Notify.failure(
+          'Sorry, there are no images matching your search query. Please try again.',
+        );
+      } else {
+        renderGallery(data.hits);
+
+        const totalPages = Math.ceil(data.totalHits / perPage);
+
+        if (page >= totalPages) {
+          allPagesLoaded = true;
+        }
+        simpleLightBox.refresh();
+        Notiflix.Notify.success(`Hooray! We found ${data.totalHits} images.`);
+      }
+    })
+    .catch(error => console.log(error))
+    .finally(() => {
+      searchForm.reset();
+    });
+}
+
+function onloadMore() {
+  if (allPagesLoaded) {
+    return;
+  }
+  page += 1;
+
+  fetchImages(query, page, perPage)
+    .then(data => {
+      if (data.hits.length === 0) {
+        allPagesLoaded = true;
+      } else {
+        renderGallery(data.hits);
+
+        simpleLightBox.refresh();
+
+        const totalPages = Math.ceil(data.totalHits / perPage);
+
+        if (page >= totalPages) {
+          allPagesLoaded = true;
+          Notiflix.Notify.failure(
+            "We're sorry, but you've reached the end of search results.",
+          );
+        }
+        
+      }
+    })
+    .catch(error => console.log(error));
+}
+
+
+function checkIfEndOfPage() {
+  return (
+    window.innerHeight + window.scrollY >=
+    document.documentElement.scrollHeight
+  );
+}
+
+function showLoadMorePage() {
+  if (checkIfEndOfPage()) {
+    onloadMore();
   }
 }
 
-// function loadMoreClick() {
-//   cardApiService.fetchItems().then(appendCardMarkup);
-// }
+window.addEventListener('scroll', showLoadMorePage);
 
-async function scrollObserver(entries, observer) {
-  for (const entry of entries) {
-    if (entry.isIntersecting) {
-      try {
-        if (entry.isIntersecting) {
-          const cards = await cardApiService.fetchItems();
-          const totalCards = cards.data.totalHits;
-          const totalPages = Math.ceil(totalCards / cardApiService.perPage);
-          const currentPage = cardApiService.page - 1;
-
-          appendCardMarkup(cards);
-
-          if (currentPage === totalPages) {
-            observer.unobserve(target);
-            notify.theEndOfListNotification()
-          }
-        }
-      } catch (error) {
-        notify.warningNotificationHandler();
-      };
-    };
-  };
+arrowTop.onclick = function () {
+  window.scrollTo({ top: 0, behavior: 'smooth' });
 };
 
-function appendCardMarkup(result) {
-  contentContainer.insertAdjacentHTML(
-    'beforeend',
-    createMurkup(result.data.hits)
+window.addEventListener('scroll', function () {
+  arrowTop.hidden = scrollY < document.documentElement.clientHeight;
+});
+
+axios.defaults.baseURL = 'https://pixabay.com/api/';
+axios.interceptors.response.use(
+  response => {
+    return response;
+  },
+  error => {
+    Notiflix.Notify.failure('Something went wrong. Please try again later.');
+    return Promise.reject(error);
+  },
+);
+
+async function fetchImages(query, page, perPage) {
+  const response = await axios.get(
+    `?key=${KEY}&q=${query}&image_type=photo&orientation=horizontal&safesearch=true&page=${page}&per_page=${perPage}`,
   );
-  galleryItems.refresh();
+  return response.data;
 }
-
-function clearContentContainer() {
-  contentContainer.innerHTML = '';
-}
-
 
